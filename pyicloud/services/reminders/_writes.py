@@ -18,6 +18,7 @@ from pyicloud.common.cloudkit import (
     CKWriteFields,
     CKWriteParent,
     CKWriteRecord,
+    CKZoneIDReq,
 )
 
 from ._constants import _REMINDERS_ZONE_REQ
@@ -44,7 +45,7 @@ from ._support import (
     _refresh_record_change_tag,
     _response_record_change_tag,
 )
-from .exceptions import CRDTDecodeError, CRDTStructureError
+from .exceptions import CRDTDecodeError, CRDTStructureError, RemindersApiError
 from .models import (
     Alarm,
     EarlyReminder,
@@ -293,16 +294,40 @@ class RemindersWriteAPI:
         _refresh_record_change_tag(modify_response, model_obj, record_name)
         return cast(CKModifyResponse, modify_response)
 
-    def _lookup_created_reminder(self, record_name: str) -> Reminder:
-        """Fetch a freshly-created reminder by record name."""
-        resp = self._get_raw().lookup(
+    def _lookup_created_reminder(
+        self,
+        record_name: str,
+        *,
+        raw: Any | None = None,
+        zone_id: CKZoneIDReq = _REMINDERS_ZONE_REQ,
+        expected_list_id: str | None = None,
+    ) -> Reminder:
+        """Fetch a freshly-created reminder from the same database and zone."""
+        resp = (raw if raw is not None else self._get_raw()).lookup(
             record_names=[record_name],
-            zone_id=_REMINDERS_ZONE_REQ,
+            zone_id=zone_id,
         )
         _assert_read_success(resp.records, "Lookup reminder")
 
         for rec in resp.records:
             if isinstance(rec, CKRecord) and rec.recordName == record_name:
+                if expected_list_id is not None:
+                    parent_list = rec.fields.get_value("List")
+                    if (
+                        rec.recordType != "Reminder"
+                        or getattr(parent_list, "recordName", None) != expected_list_id
+                        or rec.deleted is True
+                        or (
+                            rec.zoneID is not None
+                            and (
+                                rec.zoneID.zoneName != zone_id.zoneName
+                                or rec.zoneID.ownerRecordName != zone_id.ownerRecordName
+                            )
+                        )
+                    ):
+                        raise RemindersApiError(
+                            "Created shared reminder membership is unverified"
+                        )
                 return self._mapper.record_to_reminder(rec)
 
         raise LookupError(f"Reminder not found: {record_name}")
@@ -438,6 +463,9 @@ class RemindersWriteAPI:
         all_day: bool = False,
         time_zone: str | None = None,
         parent_reminder_id: str | None = None,
+        *,
+        raw: Any | None = None,
+        zone_id: CKZoneIDReq = _REMINDERS_ZONE_REQ,
     ) -> Reminder:
         """Create a new Reminder inside a List, optionally as a child reminder."""
         reminder_uuid = str(uuid.uuid4()).upper()
@@ -519,13 +547,18 @@ class RemindersWriteAPI:
             ),
         )
 
-        modify_response = self._get_raw().modify(
+        modify_response = (raw if raw is not None else self._get_raw()).modify(
             operations=[op],
-            zone_id=_REMINDERS_ZONE_REQ,
+            zone_id=zone_id,
         )
         _assert_modify_success(modify_response, "Create reminder")
 
-        return self._lookup_created_reminder(record_name)
+        return self._lookup_created_reminder(
+            record_name,
+            raw=raw,
+            zone_id=zone_id,
+            expected_list_id=list_id if raw is not None else None,
+        )
 
     def _lookup_current_fields(self, record_name: str) -> Any | None:
         """Return the server's current fields for ``record_name``, if found.

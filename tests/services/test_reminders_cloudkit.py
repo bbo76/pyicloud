@@ -1760,6 +1760,11 @@ class TestMutationErrorHandling:
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
         svc._raw.modify.return_value = CKModifyResponse(records=[], syncToken="mock")
+        monkeypatch.setattr(
+            svc._reads,
+            "lists",
+            lambda: iter([RemindersList(id="List/LIST-001", title="Private")]),
+        )
         expected = Reminder(
             id="Reminder/CHILD-001",
             list_id="List/LIST-001",
@@ -1791,6 +1796,11 @@ class TestMutationErrorHandling:
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
         svc._raw.modify.return_value = CKModifyResponse(records=[], syncToken="mock")
+        monkeypatch.setattr(
+            svc._reads,
+            "lists",
+            lambda: iter([RemindersList(id="List/LIST-001", title="Private")]),
+        )
         expected = Reminder(
             id="Reminder/COMPLETE-001",
             list_id="List/LIST-001",
@@ -2775,6 +2785,7 @@ class TestReminderReadPaths:
             sync_token="shared-token",
             more_coming=False,
         )
+        svc._shared_raw.changes.return_value.zones[0].zoneID = shared_zone
 
         lists = list(svc.lists())
 
@@ -2799,6 +2810,7 @@ class TestReminderReadPaths:
         svc._shared_raw.changes.return_value = self._changes_response(
             [], sync_token="sensitive-sync-token", more_coming=True
         )
+        svc._shared_raw.changes.return_value.zones[0].zoneID = zone
 
         with pytest.raises(RemindersApiError, match="shared list pagination") as error:
             list(svc.lists())
@@ -2828,6 +2840,7 @@ class TestReminderReadPaths:
             sync_token="shared-token",
             more_coming=False,
         )
+        svc._shared_raw.changes.return_value.zones[0].zoneID = zone
         svc._shared_raw.query.side_effect = [
             CKQueryResponse(
                 records=[self._reminder_record("Reminder/A", self.LIST_B)],

@@ -115,6 +115,13 @@ class RemindersReadAPI:
                 )
                 more_coming = False
                 for zone in response.zones:
+                    if (
+                        zone.zoneID.zoneName != zid.zoneName
+                        or zone.zoneID.ownerRecordName != zid.ownerRecordName
+                    ):
+                        raise RemindersApiError(
+                            "Shared list zone response is inconsistent"
+                        )
                     _assert_read_success(zone.records, "Fetch shared reminder lists")
                     sync_token = zone.syncToken
                     more_coming = more_coming or bool(zone.moreComing)

@@ -32,6 +32,7 @@ Releases from `2.0.0b6` up to `2.7.0` follow [Semantic Versioning](https://semve
 
 ### Fixed
 
+- Route shared Reminders creation through the shared CloudKit client and verified zone owner, requiring an associated share record with accepted read-write access; fail closed without a private fallback. Private list creation retains its existing write payload.
 - Resolve the CloudKit scope and zone for direct Reminders list-ID reads, including CLI `reminders list --list-id`; reject stalled pagination and report shared query connection failures without exposing tokens.
 - Preserve cached Photos counts on malformed count refreshes, and use safe metadata defaults for shared-stream records with invalid fields or out-of-range timestamps.
 
