@@ -38,7 +38,7 @@ from datetime import datetime
 import logging
 from typing import Any, Union
 
-from pyicloud.common.cloudkit import CKRecord
+from pyicloud.common.cloudkit import CKRecord, CKZoneIDReq
 from pyicloud.common.cloudkit.base import CloudKitExtraMode
 from pyicloud.services.base import BaseService
 
@@ -51,6 +51,7 @@ from ._protocol import (
 from ._reads import RemindersReadAPI
 from ._writes import RemindersWriteAPI
 from .client import CloudKitRemindersClient
+from .exceptions import RemindersApiError
 from .models import (
     Alarm,
     AlarmWithTrigger,
@@ -243,6 +244,25 @@ class RemindersService(BaseService):
                 ``UTC`` for naive and UTC due dates (not for all-day ones).
             parent_reminder_id: Optional parent reminder ID for subtasks.
         """
+        # A list ID does not identify its database. Rediscover its zone for each
+        # create: a cached route or successful read is not a write grant.
+        matches = [item for item in self._reads.lists() if item.id == list_id]
+        if len(matches) != 1:
+            raise RemindersApiError("Reminder list route is missing or ambiguous")
+        target = matches[0]
+        route: dict[str, Any] = {}
+        if target.scope == "shared":
+            if parent_reminder_id is not None:
+                raise RemindersApiError(
+                    "Shared subtask parent membership is unverified"
+                )
+            route = self._verified_shared_create_route(target)
+        elif (target.scope, target.zone_name, target.zone_owner) != (
+            "private",
+            "Reminders",
+            None,
+        ):
+            raise RemindersApiError("Reminder list route is unsupported")
         return self._writes.create(
             list_id=list_id,
             title=title,
@@ -254,6 +274,69 @@ class RemindersService(BaseService):
             all_day=all_day,
             time_zone=time_zone,
             parent_reminder_id=parent_reminder_id,
+            **route,
+        )
+
+    def _verified_shared_create_route(self, target: RemindersList) -> dict[str, Any]:
+        """Prove list-to-share association and accepted write rights before create.
+
+        The zone comes from a fresh shared zone change envelope; the current
+        user's permission comes only from the linked cloudKit.share record.
+        Missing or contradictory response metadata always prevents mutation.
+        """
+        if not target.zone_name or not target.zone_owner:
+            raise RemindersApiError("Shared reminder zone is incomplete")
+        zone = CKZoneIDReq(zoneName=target.zone_name, ownerRecordName=target.zone_owner)
+        shared = self._shared_raw
+        response = shared.lookup(record_names=[target.id], zone_id=zone)
+        if len(response.records) != 1:
+            raise RemindersApiError("Shared reminder list cannot be verified")
+        record = response.records[0]
+        if not isinstance(record, CKRecord) or (
+            record.recordName != target.id
+            or record.recordType != "List"
+            or record.deleted is True
+            or (
+                record.zoneID is not None
+                and not self._record_matches_zone(record, zone)
+            )
+        ):
+            raise RemindersApiError("Shared reminder list cannot be verified")
+        share_ref = record.share
+        if (
+            share_ref is None
+            or not share_ref.recordName
+            or share_ref.zoneID is None
+            or share_ref.zoneID.zoneName != zone.zoneName
+            or share_ref.zoneID.ownerRecordName != zone.ownerRecordName
+        ):
+            raise RemindersApiError("Shared reminder share association is unverified")
+        share_response = shared.lookup(
+            record_names=[share_ref.recordName], zone_id=zone
+        )
+        if len(share_response.records) != 1:
+            raise RemindersApiError("Shared reminder permissions are unverified")
+        share = share_response.records[0]
+        if (
+            not isinstance(share, CKRecord)
+            or share.recordName != share_ref.recordName
+            or share.recordType != "cloudKit.share"
+            or share.deleted is True
+            or not self._record_matches_zone(share, zone)
+            or (share.parent is not None and share.parent.recordName != target.id)
+            or share.currentUserParticipant is None
+            or share.currentUserParticipant.permission != "READ_WRITE"
+            or share.currentUserParticipant.acceptanceStatus != "ACCEPTED"
+        ):
+            raise RemindersApiError("Shared reminder write access is unverified")
+        return {"raw": shared, "zone_id": zone}
+
+    @staticmethod
+    def _record_matches_zone(record: CKRecord, zone: CKZoneIDReq) -> bool:
+        return bool(
+            record.zoneID is not None
+            and record.zoneID.zoneName == zone.zoneName
+            and record.zoneID.ownerRecordName == zone.ownerRecordName
         )
 
     def update(self, reminder: Reminder) -> None:
@@ -453,6 +536,12 @@ class RemindersService(BaseService):
         The result includes the list's reminders plus related alarms,
         triggers, attachments, hashtags, and recurrence rules keyed by ID.
         """
+        if list_id not in self._list_zones:
+            # A list id alone does not encode its CloudKit database or owner.
+            # Discover in this service instance before selecting a query route.
+            for item in self.lists():
+                if item.id == list_id:
+                    break
         scope, zone_name, zone_owner = self._list_zones.get(
             list_id, ("private", "Reminders", None)
         )

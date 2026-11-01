@@ -77,6 +77,11 @@ def test_reminders_service_create_delegates_to_write_api(
     created = Reminder(id="Reminder/1", list_id="List/WORK", title="New Task")
     create_mock = MagicMock(return_value=created)
     monkeypatch.setattr(service._writes, "create", create_mock)
+    monkeypatch.setattr(
+        service._reads,
+        "lists",
+        lambda: iter([RemindersList(id="List/WORK", title="Work")]),
+    )
 
     result = service.create("List/WORK", "New Task", desc="Description")
 

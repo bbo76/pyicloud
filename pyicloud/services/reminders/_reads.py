@@ -18,6 +18,7 @@ from pyicloud.common.cloudkit import (
     CKZoneChangesZone,
     CKZoneChangesZoneReq,
 )
+from pyicloud.exceptions import PyiCloudConnectionException
 
 from ._constants import _REMINDERS_ZONE, _REMINDERS_ZONE_REQ
 from ._mappers import Attachment, RemindersRecordMapper
@@ -102,6 +103,7 @@ class RemindersReadAPI:
             if listed_zone.deleted:
                 continue
             sync_token: str | None = None
+            seen_tokens: set[str] = set()
             more_coming = True
             while more_coming:
                 response = shared.changes(
@@ -113,9 +115,22 @@ class RemindersReadAPI:
                 )
                 more_coming = False
                 for zone in response.zones:
+                    if (
+                        zone.zoneID.zoneName != zid.zoneName
+                        or zone.zoneID.ownerRecordName != zid.ownerRecordName
+                    ):
+                        raise RemindersApiError(
+                            "Shared list zone response is inconsistent"
+                        )
                     _assert_read_success(zone.records, "Fetch shared reminder lists")
                     sync_token = zone.syncToken
                     more_coming = more_coming or bool(zone.moreComing)
+                    if more_coming:
+                        if not sync_token or sync_token in seen_tokens:
+                            raise RemindersApiError(
+                                "Fetch shared list pagination made no progress"
+                            )
+                        seen_tokens.add(sync_token)
                     for rec in zone.records:
                         if isinstance(rec, CKRecord) and rec.recordType == "List":
                             item = self._mapper.record_to_list(rec)
@@ -357,22 +372,34 @@ class RemindersReadAPI:
         recurrence_rules: dict[str, RecurrenceRule] = {}
 
         continuation: str | None = None
+        seen_markers: set[str] = set()
+        page_count = 0
         while True:
+            page_count += 1
+            if page_count > 100:
+                raise RemindersApiError("List reminders pagination exceeded 100 pages")
             raw = (
                 self._get_shared()
                 if scope == "shared" and self._get_shared
                 else self._get_raw()
             )
-            resp = raw.query(
-                query=query,
-                zone_id=type(_REMINDERS_ZONE_REQ)(
-                    zoneName=zone_name,
-                    zoneType="REGULAR_CUSTOM_ZONE",
-                    ownerRecordName=zone_owner,
-                ),
-                results_limit=results_limit,
-                continuation=continuation,
-            )
+            try:
+                resp = raw.query(
+                    query=query,
+                    zone_id=type(_REMINDERS_ZONE_REQ)(
+                        zoneName=zone_name,
+                        zoneType="REGULAR_CUSTOM_ZONE",
+                        ownerRecordName=zone_owner,
+                    ),
+                    results_limit=results_limit,
+                    continuation=continuation,
+                )
+            except PyiCloudConnectionException:
+                if scope != "shared":
+                    raise
+                raise RemindersApiError(
+                    "Shared reminders query failed (connection or timeout)"
+                ) from None
             _assert_read_success(resp.records, "List reminders query")
 
             for rec in resp.records:
@@ -391,6 +418,9 @@ class RemindersReadAPI:
             continuation = resp.continuationMarker
             if not continuation:
                 break
+            if continuation in seen_markers:
+                raise RemindersApiError("List reminders pagination repeated a marker")
+            seen_markers.add(continuation)
 
         scoped_reminders = [
             reminder

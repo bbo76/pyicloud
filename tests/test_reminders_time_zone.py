@@ -11,7 +11,7 @@ import pytest
 
 from pyicloud.common.cloudkit import CKModifyResponse, CKRecord
 from pyicloud.services.reminders._writes import _default_time_zone
-from pyicloud.services.reminders.models import Reminder
+from pyicloud.services.reminders.models import Reminder, RemindersList
 from pyicloud.services.reminders.service import RemindersService
 
 AMSTERDAM = ZoneInfo("Europe/Amsterdam")
@@ -76,6 +76,11 @@ def create(
         svc._writes,
         "_lookup_created_reminder",
         MagicMock(return_value=Reminder(id="Reminder/X", list_id="List/L", title="T")),
+    )
+    monkeypatch.setattr(
+        svc._reads,
+        "lists",
+        lambda: iter([RemindersList(id="List/L", title="Private")]),
     )
     svc.create(list_id="List/L", title="T", **kwargs)
     return written_fields(svc)
