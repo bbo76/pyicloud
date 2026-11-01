@@ -453,6 +453,12 @@ class RemindersService(BaseService):
         The result includes the list's reminders plus related alarms,
         triggers, attachments, hashtags, and recurrence rules keyed by ID.
         """
+        if list_id not in self._list_zones:
+            # A list id alone does not encode its CloudKit database or owner.
+            # Discover in this service instance before selecting a query route.
+            for item in self.lists():
+                if item.id == list_id:
+                    break
         scope, zone_name, zone_owner = self._list_zones.get(
             list_id, ("private", "Reminders", None)
         )
