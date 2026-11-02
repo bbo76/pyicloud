@@ -38,7 +38,7 @@ from datetime import datetime
 import logging
 from typing import Any, Union
 
-from pyicloud.common.cloudkit import CKRecord, CKZoneIDReq
+from pyicloud.common.cloudkit import CKLookupResponse, CKRecord, CKZoneIDReq
 from pyicloud.common.cloudkit.base import CloudKitExtraMode
 from pyicloud.services.base import BaseService
 
@@ -290,7 +290,7 @@ class RemindersService(BaseService):
         zone = CKZoneIDReq(zoneName=target.zone_name, ownerRecordName=target.zone_owner)
         shared = self._shared_raw
         response = shared.lookup(record_names=[target.id], zone_id=zone)
-        if len(response.records) != 1:
+        if len(response.records) != 1 or not self._lookup_matches_zone(response, zone):
             raise RemindersApiError("Shared reminder list cannot be verified")
         record = response.records[0]
         if not isinstance(record, CKRecord) or (
@@ -315,7 +315,9 @@ class RemindersService(BaseService):
         share_response = shared.lookup(
             record_names=[share_ref.recordName], zone_id=zone
         )
-        if len(share_response.records) != 1:
+        if len(share_response.records) != 1 or not self._lookup_matches_zone(
+            share_response, zone
+        ):
             raise RemindersApiError("Shared reminder permissions are unverified")
         share = share_response.records[0]
         if (
@@ -338,6 +340,14 @@ class RemindersService(BaseService):
             record.zoneID is not None
             and record.zoneID.zoneName == zone.zoneName
             and record.zoneID.ownerRecordName == zone.ownerRecordName
+        )
+
+    @staticmethod
+    def _lookup_matches_zone(response: CKLookupResponse, zone: CKZoneIDReq) -> bool:
+        """Reject contradictory response envelopes; CloudKit may omit zoneID."""
+        return response.zoneID is None or (
+            response.zoneID.zoneName == zone.zoneName
+            and response.zoneID.ownerRecordName == zone.ownerRecordName
         )
 
     def update(self, reminder: Reminder) -> None:
@@ -367,7 +377,9 @@ class RemindersService(BaseService):
             shared = route["raw"]
             record_name = _as_record_name(reminder.id, "Reminder")
             response = shared.lookup(record_names=[record_name], zone_id=zone)
-            if len(response.records) != 1:
+            if len(response.records) != 1 or not self._lookup_matches_zone(
+                response, zone
+            ):
                 raise RemindersApiError("Shared reminder record cannot be verified")
             record = response.records[0]
             if (
@@ -375,7 +387,13 @@ class RemindersService(BaseService):
                 or record.recordName != record_name
                 or record.recordType != "Reminder"
                 or record.deleted is True
-                or not self._record_matches_zone(record, zone)
+                # The exact-name lookup is scoped to the freshly verified shared
+                # zone. CloudKit may omit zoneID on the returned Reminder; an
+                # explicit zoneID must still agree with both zone and owner.
+                or (
+                    record.zoneID is not None
+                    and not self._record_matches_zone(record, zone)
+                )
                 or getattr(record.fields.get_value("List"), "recordName", None)
                 != target.id
                 or not reminder.record_change_tag

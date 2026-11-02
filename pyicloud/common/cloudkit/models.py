@@ -947,6 +947,7 @@ class CKLookupResponse(CKModel):
     """Response containing records fetched by lookup request."""
 
     records: list[CKRecord | CKTombstoneRecord | CKErrorItem]
+    zoneID: CKZoneID | None = None
     # Server returns a top-level syncToken when getCurrentSyncToken=true
     syncToken: str | None = None
 
