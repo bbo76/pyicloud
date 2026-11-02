@@ -2205,6 +2205,9 @@ class TestAdditionalWriteApis:
             record_change_tag="old-reminder-tag",
         )
 
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
+        )
         svc.update(reminder)
 
         update_op = svc._raw.modify.call_args.kwargs["operations"][0]
@@ -2238,6 +2241,9 @@ class TestAdditionalWriteApis:
             record_change_tag="old-rem-tag",
         )
 
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
+        )
         svc.update(reminder)
 
         update_op = svc._raw.modify.call_args.kwargs["operations"][0]
@@ -2269,6 +2275,9 @@ class TestAdditionalWriteApis:
             record_change_tag="old-reminder-tag",
         )
 
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
+        )
         svc.update(reminder)
 
         update_op = svc._raw.modify.call_args.kwargs["operations"][0]
@@ -2304,6 +2313,9 @@ class TestAdditionalWriteApis:
             record_change_tag="old-reminder-tag",
         )
 
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
+        )
         svc.update(reminder)
 
         update_op = svc._raw.modify.call_args.kwargs["operations"][0]
@@ -2335,6 +2347,9 @@ class TestAdditionalWriteApis:
             record_change_tag="old-reminder-tag",
         )
 
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
+        )
         svc.update(reminder)
 
         update_op = svc._raw.modify.call_args.kwargs["operations"][0]
@@ -2500,6 +2515,9 @@ class TestAdditionalWriteApis:
             title="Reminder",
             desc="Body",
             record_change_tag="old-reminder-tag",
+        )
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
         )
         svc.update(reminder)
         assert reminder.record_change_tag == "new-reminder-tag"

@@ -10,11 +10,13 @@ Releases from `2.0.0b6` up to `2.7.0` follow [Semantic Versioning](https://semve
 
 ### Added
 
+- Add `RemindersService.complete(reminder)` for narrow private and shared completion writes, verifying shared ownership, accepted read-write participation, membership, current version and open state before mutation.
 - Add `CloudKitZoneNotFoundError`, raised when CloudKit reports `ZONE_NOT_FOUND` instead of the generic `CloudKitApiError`, so callers can treat a missing zone (e.g. Reminders not enabled on the account) as a valid account state; it derives from `CloudKitApiError` and keeps the same message and payload, so existing handlers that catch `CloudKitApiError` and look for `ZONE_NOT_FOUND` keep working. The Reminders, Notes, and Invites services re-raise it as `RemindersZoneNotFoundError`, `NotesZoneNotFoundError`, and `InvitesZoneNotFoundError`; each derives from the service's generic API error.
 - Add a Photos error hierarchy following the same convention as the other CloudKit services: `PhotosAuthError`, `PhotosRateLimited`, `PhotosApiError`, and `PhotosZoneNotFoundError`, all deriving from `PhotosServiceException` (and therefore from `PyiCloudException`), exported from `pyicloud.services.photos`. Callers can catch `PhotosZoneNotFoundError` to treat a missing Photos zone as a valid account state; accessing `api.photos` does not raise it, but root-library operations such as indexing checks, queries, zone discovery, and writes can.
 
 ### Changed
 
+- Reject `RemindersService.update(reminder)` for shared or unverified list routes instead of writing them to the private zone; private writes retain their payload.
 - Include shared Reminders lists alongside private lists and route reminder queries through each shared list's CloudKit zone.
 - Raise the Photos service's own error types instead of raw CloudKit errors: Photos client methods raise `PhotosApiError` in place of `CloudKitApiError`, `PhotosRateLimited` in place of `CloudKitRateLimited`, and `PhotosAuthError` in place of `CloudKitAuthError`, each with the same message. Session-raised transport failures that previously surfaced as `PyiCloudAPIResponseException` are mapped the same way the other CloudKit services map them: a missing zone keeps `PhotosZoneNotFoundError`, 401/403 become `PhotosAuthError`, 429 becomes `PhotosRateLimited` (carrying `Retry-After` when Apple sends one), and everything else (including connection failures) becomes `PhotosApiError`. An authentication failure during upload hydration now surfaces immediately as `PhotosAuthError` instead of being retried until the hydration deadline. Existing handlers for `PhotosServiceException` or `PyiCloudException` keep catching all of these.
 
