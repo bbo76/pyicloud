@@ -9,7 +9,8 @@ Public API:
   - RemindersService.sync_cursor() -> str
   - RemindersService.iter_changes(since=None) -> Iterable[ReminderChangeEvent]
   - RemindersService.create(...)
-  - RemindersService.update(reminder) -> None
+  - RemindersService.update(reminder) -> None (private lists only)
+  - RemindersService.complete(reminder) -> None
   - RemindersService.delete(reminder) -> None
   - RemindersService.set_early_reminders(reminder, alerts) -> None
   - RemindersService.set_urgent(reminder, enabled, person_id=None) -> None
@@ -355,9 +356,87 @@ class RemindersService(BaseService):
         Persist changes made to a ``Reminder`` model back to iCloud.
 
         Fetch the reminder, mutate its fields locally, then pass it to
-        ``update()``.
+        ``update()``. Shared reminders require ``complete()`` for completion;
+        this broad private writer cannot safely update shared records.
         """
+        matches = [item for item in self._reads.lists() if item.id == reminder.list_id]
+        if len(matches) != 1 or (
+            matches[0].scope,
+            matches[0].zone_name,
+            matches[0].zone_owner,
+        ) != ("private", "Reminders", None):
+            raise RemindersApiError("Private reminder list route is unverified")
         self._writes.update(reminder)
+
+    def _verified_shared_reminder_route(
+        self, target: RemindersList, reminder: Reminder
+    ) -> dict[str, Any]:
+        """Verify the exact reminder, membership, version and shared write route."""
+        route = self._verified_shared_create_route(target)
+        zone = route["zone_id"]
+        shared = route["raw"]
+        record_name = _as_record_name(reminder.id, "Reminder")
+        response = shared.lookup(record_names=[record_name], zone_id=zone)
+        if len(response.records) != 1 or not self._lookup_matches_zone(response, zone):
+            raise RemindersApiError("Shared reminder record cannot be verified")
+        record = response.records[0]
+        if (
+            not isinstance(record, CKRecord)
+            or record.recordName != record_name
+            or record.recordType != "Reminder"
+            or record.deleted is True
+            # The exact-name lookup uses the verified shared owner zone.
+            # CloudKit may omit zoneID; an explicit one must agree.
+            or (
+                record.zoneID is not None
+                and not self._record_matches_zone(record, zone)
+            )
+            or getattr(record.fields.get_value("List"), "recordName", None) != target.id
+            or not reminder.record_change_tag
+            or record.recordChangeTag != reminder.record_change_tag
+            or record.fields.get_value("Deleted") == 1
+        ):
+            raise RemindersApiError(
+                "Shared reminder membership or version is unverified"
+            )
+        return {**route, "record": record}
+
+    def complete(self, reminder: Reminder) -> None:
+        """Complete one open reminder without changing any unrelated fields.
+
+        Shared lists require a fresh exact list/share/reminder lookup, accepted
+        read-write participation and matching change tag. Fail closed on stale
+        versions or missing route proof; never fall back to the private zone.
+        Re-read after an uncertain network response before attempting another
+        write. On success, the supplied model reflects completion.
+        """
+        matches = [item for item in self._reads.lists() if item.id == reminder.list_id]
+        if len(matches) != 1:
+            raise RemindersApiError("Reminder list route is missing or ambiguous")
+        target = matches[0]
+        if target.scope == "shared":
+            route = self._verified_shared_reminder_route(target, reminder)
+            record = route["record"]
+            if (
+                reminder.completed
+                or reminder.deleted
+                or record.fields.get_value("Completed") == 1
+            ):
+                raise RemindersApiError("Reminder is already completed or deleted")
+            self._writes.complete(
+                reminder,
+                raw=route["raw"],
+                zone_id=route["zone_id"],
+                current_fields=record.fields,
+            )
+        elif (target.scope, target.zone_name, target.zone_owner) == (
+            "private",
+            "Reminders",
+            None,
+        ):
+            self._writes.complete(reminder)
+        else:
+            raise RemindersApiError("Reminder list route is unsupported")
 
     def delete(self, reminder: Reminder) -> None:
         """
@@ -372,38 +451,8 @@ class RemindersService(BaseService):
             raise RemindersApiError("Reminder list route is missing or ambiguous")
         target = matches[0]
         if target.scope == "shared":
-            route = self._verified_shared_create_route(target)
-            zone = route["zone_id"]
-            shared = route["raw"]
-            record_name = _as_record_name(reminder.id, "Reminder")
-            response = shared.lookup(record_names=[record_name], zone_id=zone)
-            if len(response.records) != 1 or not self._lookup_matches_zone(
-                response, zone
-            ):
-                raise RemindersApiError("Shared reminder record cannot be verified")
-            record = response.records[0]
-            if (
-                not isinstance(record, CKRecord)
-                or record.recordName != record_name
-                or record.recordType != "Reminder"
-                or record.deleted is True
-                # The exact-name lookup is scoped to the freshly verified shared
-                # zone. CloudKit may omit zoneID on the returned Reminder; an
-                # explicit zoneID must still agree with both zone and owner.
-                or (
-                    record.zoneID is not None
-                    and not self._record_matches_zone(record, zone)
-                )
-                or getattr(record.fields.get_value("List"), "recordName", None)
-                != target.id
-                or not reminder.record_change_tag
-                or record.recordChangeTag != reminder.record_change_tag
-                or record.fields.get_value("Deleted") == 1
-            ):
-                raise RemindersApiError(
-                    "Shared reminder membership or version is unverified"
-                )
-            self._writes.delete(reminder, raw=shared, zone_id=zone)
+            route = self._verified_shared_reminder_route(target, reminder)
+            self._writes.delete(reminder, raw=route["raw"], zone_id=route["zone_id"])
         elif (target.scope, target.zone_name, target.zone_owner) == (
             "private",
             "Reminders",

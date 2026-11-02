@@ -6,7 +6,7 @@ import base64
 import gzip
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 import zlib
 
@@ -27,7 +27,7 @@ from pyicloud.services.reminders._protocol import (
 )
 from pyicloud.services.reminders._writes import RemindersWriteAPI
 from pyicloud.services.reminders.client import RemindersApiError
-from pyicloud.services.reminders.models import Reminder
+from pyicloud.services.reminders.models import Reminder, RemindersList
 from pyicloud.services.reminders.protobuf import (
     reminders_pb2,
     versioned_document_pb2,
@@ -298,6 +298,9 @@ def make_service(current: CKRecord | None) -> RemindersService:
     raw.lookup.return_value = MagicMock(records=[current] if current else [])
     raw.modify.return_value = CKModifyResponse(records=[], syncToken="mock-sync")
     svc._raw = raw
+    cast(Any, svc._reads).lists = MagicMock(
+        side_effect=lambda: iter([RemindersList(id="List/LIST-001", title="Private")])
+    )
     return svc
 
 
@@ -768,6 +771,7 @@ def test_update_preserves_device_text_when_the_stale_caller_had_none() -> None:
         MagicMock(), logging.getLogger(__name__)
     ).record_to_reminder(server_record("", "", {}))
     assert stale.title == ""
+    stale.list_id = "List/LIST-001"
     svc = make_service(server_record("Device edit", "", {}))
 
     svc.update(stale)

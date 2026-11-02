@@ -62,13 +62,25 @@ created = reminders.create(
     flagged=True,
 )
 
-created.desc = "2 percent organic"
-created.completed = True
-reminders.update(created)
+reminders.complete(created)
 
 fresh = reminders.get(created.id)
 reminders.delete(fresh)
 ```
+
+`complete(reminder)` works for private and shared lists. It performs fresh
+list discovery; for a shared list it verifies the list's share, accepted
+read-write permission, owner zone, exact reminder membership, open/non-deleted
+state, and current change tag before writing. Only `Completed`,
+`CompletionDate`, `LastModifiedDate`, and `ResolutionTokenMap` are updated.
+It raises `RemindersApiError` if proof is missing or the reminder is already
+completed or deleted. If a network response is uncertain, **read again before
+any retry**; never retry blindly. The supplied model reflects completion only
+after the server accepts the write. Mocked tests do not prove live behavior.
+
+`update(reminder)` remains the general-purpose writer for **private** lists;
+it cannot update shared reminders. For a shared reminder, use `complete()` to
+mark it done, not `update()` or `delete()`.
 
 `priority` uses Apple's numeric values. Common values are `0` (none), `1`
 (high), `5` (medium), and `9` (low).
@@ -213,8 +225,9 @@ print(reminder.urgent.enabled)
 
 Reminders caveats:
 
-- Reminder mutations operate on typed models. The normal pattern is to fetch a
-  reminder, mutate fields locally, then call `update(reminder)`.
+- Reminder mutations operate on typed models. For private lists, fetch a
+  reminder, mutate fields locally, then call `update(reminder)`. Shared lists
+  require the narrow `complete(reminder)` method for completion.
 - Naive `datetime` values passed to `create()` are interpreted as UTC by the
   service.
 - `update()` reads the reminder's current server copy first. A changed title or

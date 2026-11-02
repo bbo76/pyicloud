@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import logging
 import time
 from typing import Any, cast
@@ -771,6 +772,68 @@ class RemindersWriteAPI:
         reminder.modified = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
         reminder.server_title = reminder.title
         reminder.server_desc = reminder.desc or ""
+
+    def complete(
+        self,
+        reminder: Reminder,
+        *,
+        raw: Any | None = None,
+        zone_id: CKZoneIDReq = _REMINDERS_ZONE_REQ,
+        current_fields: Any | None = None,
+    ) -> None:
+        """Write only completion and conflict metadata to the chosen zone."""
+        if reminder.completed or reminder.deleted:
+            raise RemindersApiError("Reminder is already completed or deleted")
+        record_name = self._reminder_record_name(reminder.id)
+        if raw is None:
+            current_fields = self._lookup_current_fields(record_name)
+        if current_fields is None:
+            raise RemindersApiError("Current reminder fields are unavailable")
+        if (
+            current_fields.get_value("Completed") == 1
+            or current_fields.get_value("Deleted") == 1
+        ):
+            raise RemindersApiError("Reminder is already completed or deleted")
+        existing_tokens = current_fields.get_value("ResolutionTokenMap")
+        if existing_tokens is not None:
+            try:
+                parsed_tokens = json.loads(existing_tokens)
+            except (TypeError, ValueError) as exc:
+                raise RemindersApiError(
+                    "Reminder resolution tokens are unreadable"
+                ) from exc
+            if not isinstance(parsed_tokens, dict) or not isinstance(
+                parsed_tokens.get("map"), dict
+            ):
+                raise RemindersApiError("Reminder resolution tokens are unreadable")
+        now_ms = int(time.time() * 1000)
+        fields: dict[str, Any] = {
+            "Completed": {"type": "INT64", "value": 1},
+            "CompletionDate": {"type": "TIMESTAMP", "value": now_ms},
+            "LastModifiedDate": {"type": "TIMESTAMP", "value": now_ms},
+            "ResolutionTokenMap": {
+                "type": "STRING",
+                "value": _merge_resolution_token_map(
+                    existing_tokens,
+                    ["completed", "completionDate", "lastModifiedDate"],
+                ),
+            },
+        }
+        self._submit_single_record_update(
+            operation_name="Complete reminder",
+            record_name=record_name,
+            record_type="Reminder",
+            record_change_tag=reminder.record_change_tag,
+            fields=fields,
+            model_obj=reminder,
+            raw=raw,
+            zone_id=zone_id,
+        )
+        reminder.completed = True
+        reminder.completed_date = datetime.fromtimestamp(
+            now_ms / 1000.0, tz=timezone.utc
+        )
+        reminder.modified = reminder.completed_date
 
     def delete(
         self,
