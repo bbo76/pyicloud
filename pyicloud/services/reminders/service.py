@@ -44,6 +44,7 @@ from pyicloud.services.base import BaseService
 
 from ._mappers import RemindersRecordMapper
 from ._protocol import (
+    _as_record_name,
     _decode_crdt_document,
     _encode_crdt_document,
     _generate_resolution_token_map,
@@ -355,7 +356,44 @@ class RemindersService(BaseService):
         The provided ``Reminder`` model is marked deleted and the remote record
         is updated accordingly.
         """
-        self._writes.delete(reminder)
+        # Discover afresh: neither a list ID nor a cached route proves its scope.
+        matches = [item for item in self._reads.lists() if item.id == reminder.list_id]
+        if len(matches) != 1:
+            raise RemindersApiError("Reminder list route is missing or ambiguous")
+        target = matches[0]
+        if target.scope == "shared":
+            route = self._verified_shared_create_route(target)
+            zone = route["zone_id"]
+            shared = route["raw"]
+            record_name = _as_record_name(reminder.id, "Reminder")
+            response = shared.lookup(record_names=[record_name], zone_id=zone)
+            if len(response.records) != 1:
+                raise RemindersApiError("Shared reminder record cannot be verified")
+            record = response.records[0]
+            if (
+                not isinstance(record, CKRecord)
+                or record.recordName != record_name
+                or record.recordType != "Reminder"
+                or record.deleted is True
+                or not self._record_matches_zone(record, zone)
+                or getattr(record.fields.get_value("List"), "recordName", None)
+                != target.id
+                or not reminder.record_change_tag
+                or record.recordChangeTag != reminder.record_change_tag
+                or record.fields.get_value("Deleted") == 1
+            ):
+                raise RemindersApiError(
+                    "Shared reminder membership or version is unverified"
+                )
+            self._writes.delete(reminder, raw=shared, zone_id=zone)
+        elif (target.scope, target.zone_name, target.zone_owner) == (
+            "private",
+            "Reminders",
+            None,
+        ):
+            self._writes.delete(reminder)
+        else:
+            raise RemindersApiError("Reminder list route is unsupported")
 
     def set_early_reminders(
         self,

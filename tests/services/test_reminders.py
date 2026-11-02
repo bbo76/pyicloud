@@ -106,6 +106,11 @@ def test_reminders_service_delete_delegates_to_write_api(
     """The reminders facade should forward deletion to the write API."""
     service = RemindersService("https://example.com", MagicMock(), {"dsid": "12345"})
     reminder = Reminder(id="Reminder/1", list_id="List/WORK", title="Delete me")
+    monkeypatch.setattr(
+        service._reads,
+        "lists",
+        lambda: iter([RemindersList(id="List/WORK", title="Work")]),
+    )
     delete_mock = MagicMock()
     monkeypatch.setattr(service._writes, "delete", delete_mock)
 
