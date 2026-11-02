@@ -85,6 +85,35 @@ def _service() -> RemindersService:
     return service
 
 
+def test_shared_create_accepts_lowercase_cloudkit_share_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CloudKit's lowercase share type still permits a verified shared write."""
+    service = _service()
+    monkeypatch.setattr("pyicloud.services.reminders._writes.uuid.uuid4", lambda: "NEW")
+    lookups = list(cast(MagicMock, service._shared_raw).lookup.side_effect)
+    lookups[1] = CKLookupResponse.model_validate({
+        "records": [
+            _record(
+                SHARE,
+                "cloudkit.share",
+                zoneID=ZONE,
+                currentUserParticipant={
+                    "permission": "READ_WRITE",
+                    "acceptanceStatus": "ACCEPTED",
+                },
+            )
+        ]
+    })
+    cast(MagicMock, service._shared_raw).lookup.side_effect = lookups
+
+    result = service.create(LIST, "Synthetic")
+
+    assert result.list_id == LIST
+    cast(MagicMock, service._shared_raw).modify.assert_called_once()
+    cast(MagicMock, service._raw).modify.assert_not_called()
+
+
 def test_shared_create_uses_verified_share_and_exact_zone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -126,6 +155,7 @@ def test_shared_create_uses_verified_share_and_exact_zone(
         "no_share_ref",
         "wrong_ref_zone",
         "no_share_record",
+        "wrong_share_type",
         "read_only",
         "pending",
         "unknown_permission",
@@ -171,6 +201,10 @@ def test_shared_create_fails_closed(case: str) -> None:
         })
     elif case == "no_share_record":
         lookups[1] = CKLookupResponse(records=[])
+    elif case == "wrong_share_type":
+        lookups[1] = CKLookupResponse.model_validate({
+            "records": [_record(SHARE, "Reminder", zoneID=ZONE)]
+        })
     elif case in ("read_only", "pending", "unknown_permission"):
         participant = {
             "permission": "READ_ONLY"

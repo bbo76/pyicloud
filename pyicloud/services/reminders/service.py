@@ -320,7 +320,7 @@ class RemindersService(BaseService):
         if (
             not isinstance(share, CKRecord)
             or share.recordName != share_ref.recordName
-            or share.recordType != "cloudKit.share"
+            or share.recordType not in {"cloudKit.share", "cloudkit.share"}
             or share.deleted is True
             or not self._record_matches_zone(share, zone)
             or (share.parent is not None and share.parent.recordName != target.id)
