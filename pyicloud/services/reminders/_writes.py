@@ -275,6 +275,8 @@ class RemindersWriteAPI:
         record_change_tag: str | None,
         fields: dict[str, Any],
         model_obj: Any,
+        raw: Any | None = None,
+        zone_id: CKZoneIDReq = _REMINDERS_ZONE_REQ,
     ) -> CKModifyResponse:
         """Run a one-record update and refresh the local object's change tag."""
         op = CKModifyOperation(
@@ -286,9 +288,9 @@ class RemindersWriteAPI:
                 fields=fields,
             ),
         )
-        modify_response = self._get_raw().modify(
+        modify_response = (raw if raw is not None else self._get_raw()).modify(
             operations=[op],
-            zone_id=_REMINDERS_ZONE_REQ,
+            zone_id=zone_id,
         )
         _assert_modify_success(modify_response, operation_name)
         _refresh_record_change_tag(modify_response, model_obj, record_name)
@@ -770,7 +772,13 @@ class RemindersWriteAPI:
         reminder.server_title = reminder.title
         reminder.server_desc = reminder.desc or ""
 
-    def delete(self, reminder: Reminder) -> None:
+    def delete(
+        self,
+        reminder: Reminder,
+        *,
+        raw: Any | None = None,
+        zone_id: CKZoneIDReq = _REMINDERS_ZONE_REQ,
+    ) -> None:
         """Delete a reminder using soft-update (Deleted: 1)."""
         reminder_record_name = self._reminder_record_name(reminder.id)
         fields_mod = ["deleted", "lastModifiedDate"]
@@ -790,6 +798,8 @@ class RemindersWriteAPI:
             record_change_tag=reminder.record_change_tag,
             fields=fields,
             model_obj=reminder,
+            raw=raw,
+            zone_id=zone_id,
         )
         reminder.deleted = True
         reminder.modified = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)

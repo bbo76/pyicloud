@@ -2158,6 +2158,9 @@ class TestAdditionalWriteApis:
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
         svc._raw.modify.return_value = self._ok_modify()
+        cast(Any, svc._reads).lists = MagicMock(
+            return_value=iter([RemindersList(id="List/LIST-001", title="Private")])
+        )
 
         reminder = Reminder(
             id="Reminder/REM-DEL",
